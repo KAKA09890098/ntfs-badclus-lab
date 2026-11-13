@@ -11,3 +11,11 @@
 - SMART overall-health reported `PASSED`, while `Current_Pending_Sector` remained 833 and the ATA error log contained UNC entries. The drive is still a failing test device; no whole-disk surface scan was run.
 
 These results describe the tested NTFS-3G/Linux setup and do not claim that the physical drive has been repaired.
+
+## v0.1.2 software regression checks
+
+- `make clean all check` passed with the installed NTFS-3G headers and library.
+- Eight CLI/authorization unit tests passed, including the documented commit argument list, the `--allow-unclean-log` path, and digest mismatch rejection.
+- Three sparse-file transaction tests passed: successful Bitmap-then-MFT writes, restoration after an injected short MFT write, and restoration after an injected verification failure.
+- A temporary 256 MiB sparse NTFS image passed add/check, repeated-add idempotence, independent raw MFT/Bitmap parsing, and `ntfsresize --info --bad-sectors`.
+- These are software and image-only tests. No physical disk write was performed for v0.1.2; power-loss recovery remains unsupported.

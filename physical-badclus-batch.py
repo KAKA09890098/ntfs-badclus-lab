@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os,sys,stat,struct,subprocess,json,hashlib,datetime,pathlib,shutil
+import argparse,os,sys,stat,struct,subprocess,json,hashlib,datetime,pathlib,shutil
 from pathlib import Path
 TARGET_TEXT=os.environ.get('BADCLUS_TARGET','')
 TARGET=Path(TARGET_TEXT) if TARGET_TEXT else None
@@ -12,6 +12,25 @@ LBAS=[(594460152,594462343),(594581880,594584071),(892831040,892833159)]
 
 def need(ok,msg):
     if not ok: raise RuntimeError(msg)
+
+def parse_args(argv=None):
+    parser=argparse.ArgumentParser(description='Plan or commit the fixed NTFS BadClus lab ranges.')
+    sub=parser.add_subparsers(dest='mode',required=True)
+    sub.add_parser('prepare',help='create a read-only plan and RAM backup')
+    commit=sub.add_parser('commit',help='commit a reviewed plan')
+    commit.add_argument('backup_dir',type=Path,help='RAM backup directory printed by prepare')
+    commit.add_argument('plan_sha256',help='plan SHA-256 printed by prepare')
+    commit.add_argument('--allow-unclean-log',action='store_true',help='explicitly allow a plan with an unclean $LogFile')
+    return parser.parse_args(argv)
+
+def validate_commit_request(plan,supplied_sha256,manifest_sha256,allow_unclean_log):
+    need(len(plan)==5192 and plan[:8]==b'BCLBAT01','invalid plan size/format')
+    need(len(supplied_sha256)==64 and all(c in '0123456789abcdef' for c in supplied_sha256),'invalid command-line plan SHA-256')
+    need(supplied_sha256==manifest_sha256,'command-line plan SHA-256 differs from manifest')
+    need(hashlib.sha256(plan).hexdigest()==supplied_sha256,'plan digest mismatch')
+    need(not plan_log_unclean(plan) or allow_unclean_log,
+         'plan records an unclean $LogFile; re-run commit with --allow-unclean-log after review')
+
 def identity():
     need(TARGET is not None and bool(SERIAL),'set BADCLUS_TARGET and BADCLUS_EXPECTED_SERIAL')
     p=TARGET.resolve(strict=True)
@@ -126,6 +145,38 @@ def verify(fd,plan,phase):
     print(f'{phase}: RAW PASS; MFT USA valid; 3 $BadClus identity runs; 813/813 Bitmap bits=1; changed bitmap bits=812')
     print('FINAL_RUNS='+json.dumps(runs,separators=(',',':')))
 
+def write_verified(fd,data,offset,label):
+    n=os.pwrite(fd,data,offset)
+    need(n==len(data),f'short {label} write: {n}/{len(data)} bytes')
+    os.fsync(fd)
+    need(os.pread(fd,len(data),offset)==data,f'{label} readback mismatch')
+
+def restore_original_metadata(fd,mo,oldm,sectors):
+    # Restore the MFT record first, then release the Bitmap reservations in reverse order.
+    write_verified(fd,oldm,mo,'MFT rollback')
+    for i,s in reversed(list(enumerate(sectors))):
+        write_verified(fd,s['old'],s['offset'],f'Bitmap sector {i} rollback')
+
+def apply_metadata_transaction(fd,mo,oldm,newm,sectors,verify_written):
+    try:
+        # Reserve the clusters first, then publish the BadClus mapping.
+        for i,s in enumerate(sectors):
+            write_verified(fd,s['new'],s['offset'],f'Bitmap sector {i}')
+        write_verified(fd,newm,mo,'MFT record')
+        verify_written()
+    except BaseException as failure:
+        try:
+            restore_original_metadata(fd,mo,oldm,sectors)
+        except BaseException as rollback_failure:
+            raise RuntimeError(
+                f'metadata write failed ({failure}); automatic rollback also failed '
+                f'({rollback_failure}); keep the RAM backup and do not use the volume'
+            ) from failure
+        raise RuntimeError(
+            f'metadata write failed; original MFT/Bitmap bytes were restored; '
+            f'RAM backup retained: {failure}'
+        ) from failure
+
 def run_check(program,fd,args):
     q=subprocess.run([program,*args,f'/proc/self/fd/{fd}'],pass_fds=(fd,),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     return q.returncode,q.stdout
@@ -136,10 +187,10 @@ def save(out,name,data):
     os.chmod(p,0o600)
 
 def main():
+    args=parse_args()
     need(os.geteuid()==0,'sudo -n required')
     need(subprocess.check_output(['findmnt','-no','FSTYPE','/dev/shm'],text=True).strip()=='tmpfs','temporary backup path is not RAM tmpfs')
-    mode=sys.argv[1] if len(sys.argv)>1 else 'prepare'
-    if mode=='prepare':
+    if args.mode=='prepare':
         identity();fd=open_device('ro')
         try:
             plan=make_plan(fd);mo,oldm,newm,sectors=decode_plan(plan)
@@ -158,18 +209,15 @@ def main():
         cmd=f"sudo BADCLUS_TARGET=... BADCLUS_EXPECTED_SERIAL=... python3 -B '{Path(__file__).name}' commit '{out}' {manifest['plan_sha256']}"
         if plan_log_unclean(plan):cmd+=' --allow-unclean-log'
         print('REVIEWED COMMIT COMMAND: '+cmd)
-    elif mode=='commit':
-        need(len(sys.argv)==3,'commit requires RAM backup directory')
-        out=pathlib.Path(sys.argv[2]);need(out.parent==pathlib.Path('/dev/shm') and out.is_dir() and not out.is_symlink(),'backup directory must remain on /dev/shm')
+    elif args.mode=='commit':
+        out=args.backup_dir;need(out.parent==pathlib.Path('/dev/shm') and out.is_dir() and not out.is_symlink(),'backup directory must remain on /dev/shm')
         outst=out.stat();need(outst.st_uid==0 and stat.S_IMODE(outst.st_mode)==0o700,'backup ownership/mode mismatch')
         manifest=json.loads((out/'manifest.json').read_text());plan=(out/'batch-plan.bin').read_bytes()
-        need(hashlib.sha256(plan).hexdigest()==manifest['plan_sha256'],'plan digest mismatch')
-        need(not plan_log_unclean(plan) or a.allow_unclean_log,
-             'plan records an unclean $LogFile; re-run commit with --allow-unclean-log after review')
+        validate_commit_request(plan,args.plan_sha256,manifest.get('plan_sha256'),args.allow_unclean_log)
+        mo,oldm,newm,sectors=decode_plan(plan)
         identity();fd=open_device('ro')
         try:
             need(make_plan(fd)==plan,'fresh read-only plan differs; refusing to write')
-            mo,oldm,newm,sectors=decode_plan(plan)
             need(os.pread(fd,1024,mo)==oldm,'MFT preimage differs')
             for s in sectors:need(os.pread(fd,512,s['offset'])==s['old'],'Bitmap preimage differs')
             save(out,'mft-record.before.bin',oldm)
@@ -179,21 +227,33 @@ def main():
         try:
             need(os.pread(fd,1024,mo)==oldm,'MFT changed after exclusive open')
             for s in sectors:need(os.pread(fd,512,s['offset'])==s['old'],'Bitmap changed after exclusive open')
-            # Reserve clusters first; write and read back each sector before the MFT update.
-            for i,s in enumerate(sectors):
-                need(os.pwrite(fd,s['new'],s['offset'])==512,f'short Bitmap write for sector {i}; RAM backup retained')
-                os.fsync(fd);need(os.pread(fd,512,s['offset'])==s['new'],f'Bitmap readback failed for sector {i}; RAM backup retained')
-            need(os.pwrite(fd,newm,mo)==1024,'short MFT record write; RAM backup retained')
-            os.fsync(fd);verify(fd,plan,'COMMIT_READBACK')
+            apply_metadata_transaction(fd,mo,oldm,newm,sectors,lambda:verify(fd,plan,'COMMIT_READBACK'))
         finally:os.close(fd)
-        identity();fd=open_device('ro')
+        post_error=None
         try:
-            verify(fd,plan,'INDEPENDENT_REOPEN')
-            rc,post=run_check('ntfsresize',fd,['--info','--bad-sectors'])
-            (out/'ntfsresize-after.txt').write_text(post);need(rc==0,'post-write ntfsresize check failed; metadata writes and RAM backups retained:\n'+post)
-            pfx=subprocess.run(['ntfsfix','--no-action',f'/proc/self/fd/{fd}'],pass_fds=(fd,),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
-            (out/'ntfsfix-after.txt').write_text(pfx.stdout);need(pfx.returncode==0,'post-write ntfsfix read-only check failed; metadata writes retained:\n'+pfx.stdout)
-        finally:os.close(fd)
+            identity();fd=open_device('ro')
+            try:
+                verify(fd,plan,'INDEPENDENT_REOPEN')
+                rc,post=run_check('ntfsresize',fd,['--info','--bad-sectors'])
+                (out/'ntfsresize-after.txt').write_text(post);need(rc==0,'post-write ntfsresize consistency check failed:\n'+post)
+                pfx=subprocess.run(['ntfsfix','--no-action',f'/proc/self/fd/{fd}'],pass_fds=(fd,),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+                (out/'ntfsfix-after.txt').write_text(pfx.stdout);need(pfx.returncode==0,'post-write ntfsfix read-only check failed:\n'+pfx.stdout)
+            finally:os.close(fd)
+        except BaseException as e:post_error=e
+        if post_error is not None:
+            try:
+                identity();rfd=open_device('rw')
+                try:restore_original_metadata(rfd,mo,oldm,sectors)
+                finally:os.close(rfd)
+            except BaseException as rollback_failure:
+                raise RuntimeError(
+                    f'post-write verification failed ({post_error}); automatic rollback also failed '
+                    f'({rollback_failure}); keep the RAM backup and do not use the volume'
+                ) from post_error
+            raise RuntimeError(
+                f'post-write verification failed; original MFT/Bitmap bytes were restored; '
+                f'RAM backup retained: {post_error}'
+            ) from post_error
         disk='/dev/'+identity()[2].name
         smart=subprocess.run(['smartctl','-x','-d','sat',disk],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
         (out/'smart-after.txt').write_text(smart.stdout)

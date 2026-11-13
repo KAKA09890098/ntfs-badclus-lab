@@ -1,5 +1,15 @@
 # 版本变更说明
 
+## v0.1.2 — 提交参数修复与回归测试
+
+- 修复 `commit` 参数计数错误。现在命令按 `commit <计划目录> <plan_sha256> [--allow-unclean-log]` 解析，与 README 和 `prepare` 打印的命令一致。
+- 将未清洁 `$LogFile` 的授权改为已解析的 `--allow-unclean-log` 参数；提交同时核对命令行摘要、manifest 摘要和计划字节的 SHA-256。
+- 写入、回读或提交后检查报错时，增加进程内的尽力恢复：按 MFT 原始记录、再按反向顺序恢复 Bitmap，并逐项回读。掉电、内核崩溃、设备断连或强制终止仍不具备原子恢复保证；`/dev/shm` 备份重启后会消失。
+- 新增命令行和 dirty-log 授权单元测试，以及在临时稀疏文件上的短写/校验失败回滚测试。
+- 新增临时稀疏 NTFS 镜像集成测试：实际登记一个 LCN，检查 Bitmap、重复登记幂等性、独立原始解析器和 `ntfsresize` 结果。
+- Makefile 自动探测 NTFS-3G 的 pkg-config 名称或运行库版本；GitHub 发布工作流在发布前构建并运行 `make check`。
+- 没有对真实硬盘重跑写入实验；原有物理盘结果仍按 `RESULTS.md` 记录，v0.1.2 只验证软件修复和镜像行为。
+
 ## v0.1.1 — 使用场景与问题说明
 
 - 重写 README 开头，说明工具用于把已确认的 NTFS 卷内难读 LBA 通过 `$BadClus:$Bad` 和 `$Bitmap` 标记为坏簇，让 NTFS 分配器绕开这些簇。

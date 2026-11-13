@@ -1,4 +1,4 @@
-# NTFS BadClus 实验工具 v0.1.1
+# NTFS BadClus 实验工具 v0.1.2
 
 ## 使用场景
 
@@ -34,6 +34,7 @@
 - 仅在目标盘已完成必要镜像/备份、明确允许承担实验写入风险时使用。真实盘提交会写 `$Bitmap` 扇区和 MFT 记录 8。
 - 如果坏区位于分区外、无法确认设备身份、目标簇已有未知文件占用，或 `$LogFile` 状态不满足程序条件，就应停止并重新诊断。
 - `$BadClus` 标记不能取代镜像、文件恢复或硬盘更换；磁盘仍可能继续恶化。该程序不运行 `chkdsk` 修复，也不运行 `ntfsfix` 修复。
+- 提交不是掉电原子事务。程序检测到写入、回读或提交后检查失败时，会尝试用 `/dev/shm` 中的前像恢复 MFT 和 Bitmap，并回读恢复结果；但掉电、内核崩溃、设备断连或强制终止可能打断恢复，而且重启会清空 `/dev/shm`。这项限制进一步说明它只适合可牺牲测试盘。
 
 本版能力对比见 [CHANGELOG.md](CHANGELOG.md)，逐项测试记录见 [RESULTS.md](RESULTS.md)。
 
@@ -42,10 +43,10 @@
 ```sh
 sudo apt install build-essential ntfs-3g ntfs-3g-dev
 make
-make check-python
+make check
 ```
 
-如系统头文件或库位于非标准路径，可覆盖 `NTFS_CPPFLAGS` 和 `NTFS_LDLIBS`。仓库不包含编译产物或 NTFS-3G 的二进制依赖。
+`make check` 会运行命令行和日志授权单元测试，并在临时稀疏 NTFS 镜像上测试坏簇登记、重复登记、独立元数据解析和 `ntfsresize` 检查；不会写入物理盘。如系统头文件或库位于非标准路径，可覆盖 `NTFS_CPPFLAGS` 和 `NTFS_LDLIBS`。仓库不包含编译产物或 NTFS-3G 的二进制依赖。
 
 ## 运行前配置
 
@@ -92,7 +93,7 @@ sudo BADCLUS_TARGET="$BADCLUS_TARGET" BADCLUS_EXPECTED_SERIAL="$BADCLUS_EXPECTED
 
 ## 发行版
 
-源码发行包为 `dist/ntfs-badclus-lab-v0.1.1.tar.gz`，旁边有 Git bundle 和 SHA-256 文件。详细内容在 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
+源码发行包为 `dist/ntfs-badclus-lab-v0.1.2.tar.gz`，旁边有 Git bundle 和 SHA-256 文件。详细内容在 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 
 GitHub 发布工作流位于 `.github/workflows/publish-release.yml`。创建名称为 `release-v$(cat VERSION)` 的分支会触发发布；若首次运行失败，向该分支推送修正提交会重试。工作流核对分支名、版本和归档文件，然后创建 `v$(cat VERSION)` tag/Release，并上传源码包、Git bundle 和 SHA-256 清单。创建该分支就是发布操作；发布前应先核对 `VERSION`、发行说明和归档。工作流只接受 `release-v` 开头且与 `VERSION` 一致的分支，已存在的 Release 不会被覆盖。
 
