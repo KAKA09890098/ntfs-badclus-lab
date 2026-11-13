@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+badclus-batch-plan
+lcn-hint-test
+ntfs-logcheck
+badclus-lab
+target.env
+*.plan
+*.ntfs
+/dist/
