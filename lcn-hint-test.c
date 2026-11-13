@@ -1,4 +1,8 @@
 #include <time.h>
+#if defined(__GLIBC__) && !defined(__timespec_defined)
+/* Debian's NTFS-3G header checks this guard, while glibc uses another one. */
+#define __timespec_defined 1
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
