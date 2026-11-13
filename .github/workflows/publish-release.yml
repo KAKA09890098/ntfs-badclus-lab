@@ -33,7 +33,7 @@ jobs:
           test -s "dist/ntfs-badclus-lab-v${version}.tar.gz"
           test -s "dist/ntfs-badclus-lab-v${version}.bundle"
           test -s dist/SHA256SUMS
-          sha256sum -c dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
           echo "tag=v${version}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release and upload artifacts
