@@ -1,4 +1,4 @@
-#include <time.h>
+#include "ntfs-timespec-compat.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <ntfs-3g/volume.h>

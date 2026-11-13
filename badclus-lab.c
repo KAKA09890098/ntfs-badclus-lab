@@ -4,7 +4,7 @@
  */
 #define _GNU_SOURCE
 #include <stdio.h>
-#include <time.h>
+#include "ntfs-timespec-compat.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <stdint.h>

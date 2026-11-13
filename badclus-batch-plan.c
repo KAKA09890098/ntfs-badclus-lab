@@ -4,7 +4,7 @@
  * old/new MFT record, then (sector byte offset, old/new sector) records.
  */
 #define _GNU_SOURCE
-#include <time.h>
+#include "ntfs-timespec-compat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
