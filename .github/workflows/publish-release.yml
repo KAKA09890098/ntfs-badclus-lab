@@ -1,0 +1,54 @@
+name: Publish versioned release
+
+on:
+  create:
+  push:
+    branches:
+      - 'release-v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: (github.event_name == 'create' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release-v')) || (github.event_name == 'push' && startsWith(github.ref_name, 'release-v'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the created release branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate version and release files
+        id: verify
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          test -n "$version"
+          test "$GITHUB_REF_NAME" = "release-v${version}"
+          test -s "dist/ntfs-badclus-lab-v${version}.tar.gz"
+          test -s "dist/ntfs-badclus-lab-v${version}.bundle"
+          test -s dist/SHA256SUMS
+          sha256sum -c dist/SHA256SUMS
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.verify.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; leaving it unchanged."
+            exit 0
+          fi
+          gh release create "$tag" \
+            "dist/ntfs-badclus-lab-${tag}.tar.gz" \
+            "dist/ntfs-badclus-lab-${tag}.bundle" \
+            dist/SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes-file RELEASE_NOTES.md

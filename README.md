@@ -89,7 +89,9 @@ sudo BADCLUS_TARGET="$BADCLUS_TARGET" BADCLUS_EXPECTED_SERIAL="$BADCLUS_EXPECTED
 
 ## 发行版
 
-源码发行包为 `dist/ntfs-badclus-lab-v0.1.0.tar.gz`，旁边有 SHA-256 文件。发布版本保持实验性标签，详细内容在 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
+源码发行包为 `dist/ntfs-badclus-lab-v0.1.0.tar.gz`，旁边有 Git bundle 和 SHA-256 文件。详细内容在 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
+
+GitHub 发布工作流位于 `.github/workflows/publish-release.yml`。创建名称为 `release-v$(cat VERSION)` 的分支会触发发布；若首次运行失败，向该分支推送修正提交会重试。工作流核对分支名、版本和归档文件，然后创建 `v$(cat VERSION)` tag/Release，并上传源码包、Git bundle 和 SHA-256 清单。创建该分支就是发布操作；发布前应先核对 `VERSION`、发行说明和归档。工作流只接受 `release-v` 开头且与 `VERSION` 一致的分支，已存在的 Release 不会被覆盖。
 
 ## 许可证
 
